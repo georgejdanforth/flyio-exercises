@@ -83,7 +83,7 @@ class Node:
         self._reply_handlers[msg_id] = fut
 
         req = Request(self.node_id, dest, body)
-        await self._send(req)
+        await self.send(req)
 
         try:
             async with asyncio.timeout(1.0):  # Timeout RPCs after 1 second.
@@ -122,7 +122,7 @@ class Node:
         data = json.loads(line)
         return Request(data["src"], data["dest"], data["body"])
 
-    async def _send(self, req: Request) -> None:
+    async def send(self, req: Request) -> None:
         serialized = json.dumps({"src": req.src, "dest": req.dest, "body": req.body})
         async with self._stdout_lock:
             loop = asyncio.get_running_loop()
@@ -134,7 +134,7 @@ class Node:
         self.node_id = req.body["node_id"]
         self.node_ids = req.body["node_ids"]
         resp_body = {"type": "init_ok", "in_reply_to": req.body["msg_id"]}
-        await self._send(Request(self.node_id, req.src, resp_body))
+        await self.send(Request(self.node_id, req.src, resp_body))
 
         if init is not None:
             init()
@@ -172,7 +172,7 @@ class Node:
                         "text": "RPC type is not supported",
                     }
                 resp_body["in_reply_to"] = req.body["msg_id"]
-                await self._send(Request(self.node_id, req.src, resp_body))
+                await self.send(Request(self.node_id, req.src, resp_body))
 
             self.spawn(thunk(req))
 
