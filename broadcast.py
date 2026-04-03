@@ -71,10 +71,8 @@ async def _readFromNeighbor(neighbor):
   })
   response = await node.rpc(neighbor, neighborReq.body)
   if response["type"] == "error":
-    print("--- ERROR readFromNeighbor on " + neighbor, file=sys.stderr)
     return
 
-  print("--- SUCCESS readFromNeighbor --- ", file=sys.stderr)
   async with lock:
     global values
     values |= set(response["messages"])
@@ -82,16 +80,12 @@ async def _readFromNeighbor(neighbor):
 async def _pollNeighbors():
   while True:
     await asyncio.sleep(1)
-    print("node.node_id " + node.node_id, file=sys.stderr)
     neighbors = network_topology[node.node_id]
     # parallelize call
     for neighbor in neighbors:
       asyncio.create_task(_readFromNeighbor(neighbor))
 
 def pollNeighbors():
-  print("polling neighbors", file=sys.stderr)
-  # loop = asyncio.get_running_loop()
-  # loop.run_in_executor(None, _pollNeighbors)
   asyncio.get_running_loop().create_task(_pollNeighbors())
 
 node.run(pollNeighbors)
