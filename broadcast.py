@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from maelstrom import Node, Request, Body
+from collections import defaultdict
 import asyncio
 import sys
 
@@ -9,12 +10,21 @@ class NodeState:
     self.node = node
     self.network_topology = {}
     self.values = {}
+    self.neighbor_versions = defaultdict(lambda: 0)
     self.current_version = 0
     self.lock = asyncio.Lock()
   
   def getNeighbors(self):
     return self.network_topology[self.node.node_id]
-  
+
+  async def getNeighborVersion(self, neighborId):
+    async with self.lock:
+      return self.neighbor_versions[neighborId]
+
+  async def updateNeighborVersion(self, neighborId, version):
+    async with self.lock:
+      self.neighbor_versions[neighborId] = version
+
   async def getValues(self, minVersion=0):
     result = []
 
@@ -30,10 +40,14 @@ class NodeState:
 
   async def addValues(self, items):
     async with self.lock:
+      did_add = False
       for item in items:
         if item not in self.values:
           self.values[item] = self.current_version
-      self.current_version += 1
+          did_add = True
+      if did_add:
+        self.current_version += 1
+      return did_add
 
 node = Node()
 state = NodeState(node)
@@ -42,21 +56,34 @@ state = NodeState(node)
 async def broadcast(req: Request) -> Body:
   incoming = req.body["message"]
 
-  if await state.hasValue(incoming):
+  did_add = await state.addValues([incoming])
+  if not did_add:
     return {
       "type": "broadcast_ok"
     }
 
-  await state.addValues([incoming])
-
   neighbors = state.getNeighbors()
   for neighbor in neighbors:
-    neighborReq = Request(src=node.node_id, dest=neighbor, body=req.body)
-    node.spawn(node.send(neighborReq))
+    node.spawn(updateNeighbor(neighbor))
 
   return {
     "type": "broadcast_ok"
   }
+
+@node.handler
+async def broadcast_multiple(req: Request) -> Body:
+  messages = req.body["messages"]
+
+  did_add = await state.addValues(messages)
+  if not did_add:
+    return {
+      "type": "broadcast_multiple_ok"
+    }
+  
+  neighbors = state.getNeighbors()
+  for neighbor in neighbors:
+    node.spawn(updateNeighbor(neighbor))
+
 
 @node.handler
 async def read(req: Request) -> Body:
@@ -72,28 +99,39 @@ async def topology(req: Request) -> Body:
     "type": "topology_ok",
   }
 
-async def _readFromNeighbor(neighbor):
-  neighborReq = Request(src=node.node_id, dest=neighbor, body={
-    "type": "read",
+async def updateNeighbor(neighborId):
+  # check version of neighbor
+  version = await state.getNeighborVersion(neighborId)
+
+  # get all values that need to be sent to neighbor based on its version
+  values = await state.getValues(version)
+
+  # send the values in multi-broadcast rpc
+  request = Request(src=node.node_id, dest=neighborId, body={
+    "type": "broadcast_multiple",
+    "messages": values,
   })
-  response = await node.rpc(neighbor, neighborReq.body)
+
+  # split into chunks for >30
+  response = await node.rpc(neighborId, request.body)
   if response["type"] == "error":
     return
 
-  await state.addValues(response["messages"])
+  await updateNeighborVersion(neighborId, state.current_version)
 
-async def _pollNeighbors():
+
+async def _updateNeighbor():
   while True:
     await asyncio.sleep(1)
     neighbors = state.getNeighbors()
     # parallelize call
     for neighbor in neighbors:
-      asyncio.create_task(_readFromNeighbor(neighbor))
+      asyncio.create_task(updateNeighbor(neighbor))
 
-def pollNeighbors():
-  asyncio.get_running_loop().create_task(_pollNeighbors())
+def updateNeighbors():
+  asyncio.get_running_loop().create_task(_updateNeighbor())
 
-node.run(pollNeighbors)
+node.run(updateNeighbors)
 
 
 
