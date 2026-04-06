@@ -40,13 +40,14 @@ class NodeState:
 
   async def addValues(self, items):
     async with self.lock:
+      next_version = self.current_version + 1
       did_add = False
       for item in items:
         if item not in self.values:
-          self.values[item] = self.current_version
+          self.values[item] = next_version
           did_add = True
       if did_add:
-        self.current_version += 1
+        self.current_version = next_version
       return did_add
 
 node = Node()
@@ -101,7 +102,7 @@ async def topology(req: Request) -> Body:
 
 async def updateNeighbor(neighborId):
   # check version of neighbor
-  version = await state.getNeighborVersion(neighborId)
+  version = await state.getNeighborVersion(neighborId) + 1
 
   # get all values that need to be sent to neighbor based on its version
   values = await state.getValues(version)
